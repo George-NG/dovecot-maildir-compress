@@ -1,5 +1,5 @@
 # dovecot-maildir-compress
-Compress and decompress mails in a maildir directory structure, for use with dovecot's zlib plugin
+Compress and decompress mails in a maildir directory structure, for use with dovecot's zlib plugin.
 More information can be found here: https://doc.dovecot.org/3.0/configuration_manual/mail_compress_plugin/
 
 # Why?
@@ -20,7 +20,6 @@ Decompress all mails using bzip2
 ```
 
 # TODO:
-- Add file autodetection, to be able to decompress compressed mails, no matter the compression type. Useful if we have mails not compressed with this script and/or multiple types.
 - Move the debug messages in a separate function, tidy up the code. Output debug to stderr instead of stdout.
 - Pass multiple dirs as arguments to the script
 - Fix the following line to use dirname or realpath instead of cd && pwd:
