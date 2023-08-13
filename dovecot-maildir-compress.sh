@@ -95,6 +95,7 @@ if $debug; then
 fi
 
 store=$@
+lockfile="$maildir/../dovecot-uidlist.lock"
 
         find "$store" -type d -name "cur" | while read maildir; do
 
@@ -155,10 +156,8 @@ store=$@
                         continue
                 fi
 
-                lockfile="$maildir/../dovecot-uidlist.lock"
-
                 # Should really check dovecot-uidlist is in $maildir/..
-                if lock=$(touch "$lockfile" && flock -n "$lockfile" true || false); then
+                if lock=$(touch "$lockfile" && flock -w 10 -n "$maildir" true || false); then
                         # The directory is locked now
 
                         count=0
@@ -218,7 +217,8 @@ store=$@
                                 rm -f "$tmpdir/$filename"
                         done
                 fi
-                rm -f "$lockfile" 2>/dev/null
+                flock -u "$maildir"
+                rm -f "$lockfile"
                 echo -e "\r\e[K[ Done ] \"$(dirname "$maildir")\""
         done
 #done
