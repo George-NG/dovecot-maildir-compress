@@ -23,7 +23,7 @@ Decompress all mails using bzip2
 - Move the debug messages in a separate function, tidy up the code. Output debug to stderr instead of stdout.
 - Pass multiple dirs as arguments to the script
 
-# CHHANGELOG:
+# CHANGELOG:
 - Changed locking to use flock instead of maildirlock due to segfaulting issues on cpanel servers.
 - Added auto detection of compressed file types when decompressing
 - Changed the way tmpdir is checked and defined 
