@@ -101,8 +101,11 @@ store=$@
 
                 # Check if "$maildir/../tmp" exists and is a directory
                 # If it exists then define tmpdir as the path otherwise exit
-                [[ -d "$maildir/../tmp" ]] && tmpdir="$maildir/../tmp" || exit 1
-                lockfile="$maildir/../dovecot-uidlist.lock"
+                [[ -d "$maildir/../tmp" ]] \
+                        && tmpdir="$(realpath $maildir/../tmp)" \
+                        || { echo "$maildir/../tmp not found"; exit 1; }
+
+                lockfile="$($maildir/../dovecot-uidlist.lock)"
 
                 find=""
                 if [[ "$action" == "compress" ]]; then
