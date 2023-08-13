@@ -3,6 +3,7 @@
 # 2023-08-13 - Forked from https://github.com/George-NG/dovecot-maildir-compress 
 # * Changed locking to use flock instead of maildirlock due to segfaulting issues on cpanel servers.
 # * Added detection of compressed file types when decompressing
+# * Changed the way tmpdir is defined 
 
 # Find the mails you want to compress in a single maildir.
 #
@@ -98,8 +99,10 @@ store=$@
 
         find "$store" -type d -name "cur" | while read maildir; do
 
+                # Check if "$maildir/../tmp" exists and is a directory
+                # If it exists then define tmpdir as the path otherwise exit
+                [[ -d "$maildir/../tmp" ]] && tmpdir="$maildir/../tmp" || exit 1
                 lockfile="$maildir/../dovecot-uidlist.lock"
-                tmpdir=$(cd "$maildir/../tmp" &>/dev/null && pwd) || exit 1
 
                 find=""
                 if [[ "$action" == "compress" ]]; then
