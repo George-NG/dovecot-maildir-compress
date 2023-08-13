@@ -1,5 +1,6 @@
 # dovecot-maildir-compress
 Compress and decompress mails in a maildir directory structure, for use with dovecot's zlib plugin
+More information can be found here: https://doc.dovecot.org/3.0/configuration_manual/mail_compress_plugin/
 
 # Why?
 I needed a script for compressing mails on a mail server at the time of switching to using the zlib plugin. While searching for something, I landed on a github gist page pointing to a blog post with good enough script for the job. The problem however was that the script wasn't really showing any output and I wanted it to be easier to run against multiple directories with one run.
