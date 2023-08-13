@@ -1,7 +1,7 @@
 #!/bin/bash
 
-## 2023-08-13 - Forked from https://github.com/George-NG/dovecot-maildir-compress 
-## Changed locking to use flock instead due to lockmaildir segfaulting on cpanel servers.
+# 2023-08-13 - Forked from https://github.com/George-NG/dovecot-maildir-compress 
+# Changed locking to use flock instead of maildirlock due to segfaulting issues on cpanel servers.
 
 # Find the mails you want to compress in a single maildir.
 #
