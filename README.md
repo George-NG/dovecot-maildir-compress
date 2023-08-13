@@ -22,7 +22,8 @@ Decompress all mails using bzip2
 # TODO:
 - Move the debug messages in a separate function, tidy up the code. Output debug to stderr instead of stdout.
 - Pass multiple dirs as arguments to the script
-- Fix the following line to use dirname or realpath instead of cd && pwd:
-```bash
-tmpdir=$(cd "$maildir/../tmp" &>/dev/null && pwd) || exit 1
-```
+
+# CHHANGELOG:
+- Changed locking to use flock instead of maildirlock due to segfaulting issues on cpanel servers.
+- Added auto detection of compressed file types when decompressing
+- Changed the way tmpdir is checked and defined 
