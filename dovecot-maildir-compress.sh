@@ -95,10 +95,10 @@ if $debug; then
 fi
 
 store=$@
-lockfile="$maildir/../dovecot-uidlist.lock"
 
         find "$store" -type d -name "cur" | while read maildir; do
 
+                lockfile="$maildir/../dovecot-uidlist.lock"
                 tmpdir=$(cd "$maildir/../tmp" &>/dev/null && pwd) || exit 1
 
                 find=""
