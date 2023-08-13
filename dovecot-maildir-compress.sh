@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # 2023-08-13 - Forked from https://github.com/George-NG/dovecot-maildir-compress 
-# Changed locking to use flock instead of maildirlock due to segfaulting issues on cpanel servers.
+# * Changed locking to use flock instead of maildirlock due to segfaulting issues on cpanel servers.
+# * Added detection of compressed file types when decompressing
 
 # Find the mails you want to compress in a single maildir.
 #
@@ -132,7 +133,11 @@ store=$@
                         if [[ "$action" == "compress" ]]; then
                                 $compress --best --stdout "$srcfile" > "$tmpfile"
                         else
-                                $compress --decompress --stdout "$srcfile" > "$tmpfile"
+                                # Autodetect compressed file type and use it as the decompression binary filename
+                                [[ "$(file -b "$srcfile" | awk '{print tolower($1)}')" =~ (xz|bzip2|gzip) ]] \
+                                        && decompress=${BASH_REMATCH[1]} \
+                                        || decompress=$compress
+                                $decompress --decompress --stdout "$srcfile" > "$tmpfile"
                         fi
 
                         # Copy over some things
