@@ -105,7 +105,7 @@ store=$@
                         && tmpdir="$(realpath $maildir/../tmp)" \
                         || { echo "$maildir/../tmp not found"; exit 1; }
 
-                lockfile="$($maildir/../dovecot-uidlist.lock)"
+                lockfile="$maildir/../dovecot-uidlist.lock"
 
                 find=""
                 if [[ "$action" == "compress" ]]; then
