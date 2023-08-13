@@ -1,5 +1,8 @@
 #!/bin/bash
 
+## 2023-08-13 - Forked from https://github.com/George-NG/dovecot-maildir-compress 
+## Changed locking to use flock instead due to lockmaildir segfaulting on cpanel servers.
+
 # Find the mails you want to compress in a single maildir.
 #
 #     Skip files that don't have ,S=<size> in the filename.
@@ -147,8 +150,10 @@ store=$@
                         continue
                 fi
 
+                lockfile="$maildir/../dovecot-uidlist.lock"
+
                 # Should really check dovecot-uidlist is in $maildir/..
-                if lock=$(/usr/lib/dovecot/maildirlock "$maildir/.." 10); then
+                if lock=$(touch "$lockfile" && flock -n "$lockfile" true || false); then
                         # The directory is locked now
 
                         count=0
@@ -201,7 +206,6 @@ store=$@
                                 fi
                         done
 
-                        kill -SIGTERM $lock
                 else
                         echo "Failed to lock: $maildir" >&2
 
@@ -209,6 +213,7 @@ store=$@
                                 rm -f "$tmpdir/$filename"
                         done
                 fi
+                rm -f "$lockfile" 2>/dev/null
                 echo -e "\r\e[K[ Done ] \"$(dirname "$maildir")\""
         done
 #done
