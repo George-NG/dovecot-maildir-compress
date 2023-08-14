@@ -223,7 +223,7 @@ store=$@
                                 rm -f "$tmpdir/$filename"
                         done
                 fi
-                flock -u "$maildir"
+                flock -u "$maildir" true
                 rm -f "$lockfile"
                 echo -e "\r\e[K[ Done ] \"$(dirname "$maildir")\""
         done
