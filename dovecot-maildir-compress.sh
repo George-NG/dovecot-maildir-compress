@@ -102,7 +102,7 @@ store=$@
                 # Check if "$maildir/../tmp" exists and is a directory
                 # If it exists then define tmpdir as the path otherwise exit
                 [[ -d "$maildir/../tmp" ]] \
-                        && tmpdir="$(realpath $maildir/../tmp 2>/dev/null)" \
+                        && tmpdir="$(realpath "$maildir/../tmp" 2>/dev/null)" \
                         || { echo "$maildir/../tmp not found, skipping."; continue; }
 
                 lockfile="$maildir/../dovecot-uidlist.lock"
