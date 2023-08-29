@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# 2023-08-13 - Forked from https://github.com/George-NG/dovecot-maildir-compress 
+# * Changed locking to use flock instead of maildirlock due to segfaulting issues on cpanel servers.
+# * Added detection of compressed file types when decompressing
+# * Changed the way tmpdir is defined 
+
 # Find the mails you want to compress in a single maildir.
 #
 #     Skip files that don't have ,S=<size> in the filename.
@@ -94,7 +99,13 @@ store=$@
 
         find "$store" -type d -name "cur" | while read maildir; do
 
-                tmpdir=$(cd "$maildir/../tmp" &>/dev/null && pwd) || exit 1
+                # Check if "$maildir/../tmp" exists and is a directory
+                # If it exists then define tmpdir as the path otherwise exit
+                [[ -d "$maildir/../tmp" ]] \
+                        && tmpdir="$(realpath "$maildir/../tmp" 2>/dev/null)" \
+                        || { echo "$maildir/../tmp not found, skipping."; continue; }
+
+                lockfile="$maildir/../dovecot-uidlist.lock"
 
                 find=""
                 if [[ "$action" == "compress" ]]; then
@@ -129,7 +140,11 @@ store=$@
                         if [[ "$action" == "compress" ]]; then
                                 $compress --best --stdout "$srcfile" > "$tmpfile"
                         else
-                                $compress --decompress --stdout "$srcfile" > "$tmpfile"
+                                # Autodetect compressed file type and use it as the decompression binary filename
+                                [[ "$(file -b "$srcfile" | awk '{print tolower($1)}')" =~ (xz|bzip2|gzip) ]] \
+                                        && decompress=${BASH_REMATCH[1]} \
+                                        || decompress=$compress
+                                $decompress --decompress --stdout "$srcfile" > "$tmpfile"
                         fi
 
                         # Copy over some things
@@ -148,7 +163,7 @@ store=$@
                 fi
 
                 # Should really check dovecot-uidlist is in $maildir/..
-                if lock=$(/usr/lib/dovecot/maildirlock "$maildir/.." 10); then
+                if lock=$(touch "$lockfile" && flock -w 10 -n "$maildir" true || false); then
                         # The directory is locked now
 
                         count=0
@@ -201,7 +216,6 @@ store=$@
                                 fi
                         done
 
-                        kill -SIGTERM $lock
                 else
                         echo "Failed to lock: $maildir" >&2
 
@@ -209,6 +223,7 @@ store=$@
                                 rm -f "$tmpdir/$filename"
                         done
                 fi
+                flock -u "$maildir" rm -f "$lockfile"
                 echo -e "\r\e[K[ Done ] \"$(dirname "$maildir")\""
         done
 #done
