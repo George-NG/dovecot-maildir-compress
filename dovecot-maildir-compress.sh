@@ -1,10 +1,34 @@
 #!/bin/bash
 
-# 2023-08-13 - Forked from https://github.com/George-NG/dovecot-maildir-compress 
+# 2025-09-13 @George-NG
+# * Renamed the debug name and var to "dryrun" as that's more appropriate for what that is used for
+# * Updated the dryrun output to be a bit more verbose about what would be done
+# * Renamed the variables for the `cur` and `tmp` directories to make them more descriptive
+# * Added extra arguments for displaying warnings, and for selecting depth of operation and verbosity
+# * Added convenience functions for printing out messages on the screen
+# * Added additional colours to the output, in use with the printing functions
+# * Changed indentation throughout the script - the original was using 8 spaces (tabs), changed it
+# to 4 and re-indented everything
+# * Changed the "find" variable to "files_found", as it wasn't very descriptive. This allowed for
+# additional checks to be added and to display additional information
+# * Removed the file search based on flag in the file name. Instead, all files have their mime-type
+# checked and acted on according to the selected action.
+# * Added additional check for number of files found for the selected operation. This allows us to
+# skip the whole section of moving the files back to `cur`, and because of that - not having to lock
+# the maildir and do nothing with the lock.
+# * Removed the whole section which was updating the file name to add the `Z` flag - dovecot does not
+# care about these flags and this modification can cause problems with the service (check the README)
+# 
+# 2023-08-13 @styelz
 # * Changed locking to use flock instead of maildirlock due to segfaulting issues on cpanel servers.
 # * Added detection of compressed file types when decompressing
 # * Changed the way tmpdir is defined 
 
+## Originally based on:
+## https://gist.github.com/cs278/1490556
+## http://ivaldi.nl/blog/2011/12/06/compressed-mail-in-dovecot/
+
+# This is from the original guide
 # Find the mails you want to compress in a single maildir.
 #
 #     Skip files that don't have ,S=<size> in the filename.
@@ -35,195 +59,263 @@
 #
 # Unlock the maildir by sending a TERM signal to the maildirlock process (killing the PID it wrote to stdout).
 
-## Based on:
-## https://gist.github.com/cs278/1490556
-## http://ivaldi.nl/blog/2011/12/06/compressed-mail-in-dovecot/
-##
-
 # Variables initialization
-debug=false
+dryrun=false
 compress="bzip2"
 action="compress"
 store=""
 days=30
+warn_mismatch=false
+maxdepth=""
+verbose=false
 
 function usage {
-        echo "Usage: $(basename $0) ([-b|-c|-d|-g|-l|-t <days>]) /path/to/maildir" >&2
-        echo "    -c - compress (default)" >&2
-        echo "    -d - decompress"  >&2
-        echo "    -b - use bzip2 (default)"  >&2
-        echo "    -g - use gzip"  >&2
-        echo "    -l - use lzma/xz (check if dovecot version supports it)" >&2
-        echo "    -t <days> - minimum message age in days (default 30)" >&2
-        echo "" >&2
-        exit 127;
+    echo "Usage: $(basename $0) ([-b|-c|-d|-D|-g|-l|-s|-t <days>|-v|-w]) /path/to/maildir" >&2
+    echo "    -b - use bzip2 (default)"  >&2
+    echo "    -c - compress (default)" >&2
+    echo "    -d - decompress"  >&2
+    echo "    -D - dry-run - will not perform any actions, will only report"  >&2
+    echo "    -g - use gzip"  >&2
+    echo "    -l - use lzma/xz (check if dovecot version supports it)" >&2
+    echo "    -s - don't process subdirectories (max depth of 1)" >&2
+    echo "    -t <days> - minimum message age in days (default 30)" >&2
+    echo "    -v - verbose, print informational and warning messages about the progress" >&2
+    echo "    -w - enable warnings for unprocessed files due to mime type mismatch" >&2
+    echo "" >&2
+    exit 127;
 }
 
-while getopts :bcdDghlt: option; do
-        case "${option}" in
-                b) compress="bzip2" ;;
-                c) action="compress" ;;
-                d) action="decompress" ;;
-                D) debug=true ;;
-                g) compress="gzip" ;;
-                l) compress="xz" ;;
-                t)
-                        if [ "$OPTARG" -ne "$OPTARG" ] 2>/dev/null ; then
-                                echo "Number of days is not a number." >&2
-                                usage
-                        fi
-                        days=$((OPTARG-1))
-                ;;
-                h) usage ;;
-                \?) echo "Invalid option: -$OPTARG" >&2; usage ;;
-        esac
+# Colours
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+# Disable colours (ie "No colour")
+NC='\033[0m'
+
+function print_info {
+    if $verbose; then
+        echo -ne "\r\e[K[ ${BLUE}INFO${NC} ] $1\n"
+    fi
+}
+
+function print_error {
+    echo -ne "\r\e[K[ ${RED}ERR${NC}  ] $1\n"
+}
+
+function print_warning {
+    if $verbose; then
+        echo -ne "\r\e[K[ ${YELLOW}WARN${NC} ] $1\n"
+    fi
+}
+
+function print_done {
+    echo -ne "\r\e[K[ ${GREEN}DONE${NC} ] $1\n"
+}
+
+function print_progress {
+    echo -ne "\r\e[K$1"
+}
+
+while getopts :bcdDghlst:vw option; do
+    case "${option}" in
+        b) compress="bzip2" ;;
+        c) action="compress" ;;
+        d) action="decompress" ;;
+        D) dryrun=true ;;
+        g) compress="gzip" ;;
+        h) usage ;;
+        l) compress="xz" ;;
+        s) maxdepth="-maxdepth 1" ;;
+        t)
+            if [ "$OPTARG" -ne "$OPTARG" ] 2>/dev/null || [ $? -eq 2 ]; then
+                echo "Number of days is not a number." >&2
+                usage
+            fi
+            days=$((OPTARG-1))
+        ;;
+        v) verbose=true ;;
+        w) warn_mismatch=true ;;
+        \?) echo "Invalid option: -$OPTARG" >&2; usage ;;
+    esac
 done
 
 # shift out opts
 shift $((OPTIND -1))
 
 if [[ "x$@" == "x" ]]; then
-        echo "No maildir provided."
-        usage
+    echo "No maildir provided."
+    usage
 fi
 
-# Multiple dirs?
-# not for now...
-#for store in $@; do
-
-if $debug; then
-        echo "Debug mode, will not actually perform compression or moving of mails..."
+if $dryrun; then
+    print_info "Dry-run mode, will not actually perform (de)compression or moving of mails..."
 fi
 
 store=$@
 
-        find "$store" -type d -name "cur" | while read maildir; do
+# Find all of the "cur" directories in the provided location
+# This would contain any current (read) messages. We don't want to touch the
+# "new" directory as the IMAP server may move the mail to "cur" at any given time.
+# The "tmp" directory is where the messages are delivered by the MDA (dovecot)
+# before they are moved to "new".
+find "$store" $maxdepth -type d -name "cur" | while read maildir_cur; do
 
-                # Check if "$maildir/../tmp" exists and is a directory
-                # If it exists then define tmpdir as the path otherwise exit
-                [[ -d "$maildir/../tmp" ]] \
-                        && tmpdir="$(realpath "$maildir/../tmp" 2>/dev/null)" \
-                        || { echo "$maildir/../tmp not found, skipping."; continue; }
+    maildir_base=$(realpath "$maildir_cur/..")
+    maildir_tmp=""
+    # Check if "$maildir_cur/../tmp" exists and is a directory
+    # If it exists then define maildir_tmp as the path otherwise exit
+    if [ -d "$maildir_cur/../tmp" ]; then
+        maildir_tmp="$(realpath "$maildir_cur/../tmp" 2>/dev/null)"
+    else
+        print_error "Temp dir not found, skipping ${maildir_base}..."
+        continue
+    fi
 
-                lockfile="$maildir/../dovecot-uidlist.lock"
+    lockfile="${maildir_base}/dovecot-uidlist.lock"
 
-                find=""
-                if [[ "$action" == "compress" ]]; then
-                        find=$(find "$maildir" -type f -name "*,S=*" -mtime +$days ! -name "*,*:2,*,*Z*" -printf "%f\n")
-                else
-                        find=$(find "$maildir" -type f -name "*,S=*" -mtime +$days -name "*,*:2,*,*Z*" -printf "%f\n")
-                fi
+    files_found=""
 
-                if [ -z "$find" ]; then
-                        continue
-                fi
+    # Maildir filenames are in the format
+    # <timestamp>.<uniqueness qualifier/id>.<mail system hostname>,S=<size>,W=<vsize>:2,<flags>
+    # The uniqueness qualifier is in the format <letter><numbers><letter><numbers> where these vary
+    # for the different systems. I've seen the first letter as M, H and V, whereas the second was always a P.
+    # size is the total size of the mail message
+    # vsize is the RFC822 size, ie the size with line endings set to CRLF instead of LF only (ie, Windows...)
+    # Sometimes the vsize may be missing.
+    # From the upstream there was a `-name "*,S=*"` here, but turns out some older formats do not even have
+    # the sizes in the file name
+    files_found=$(find "$maildir_cur" -type f -mtime +$days -printf "%f\n")
 
-                total=$(echo "$find"|wc -l)
-                count=0
+    if [ -z "$files_found" ]; then
+        print_info "No files found in ${maildir_cur}, skipping..."
+        print_done "$(dirname "$maildir_cur")"
+        continue
+    fi
 
-                echo "$find" | while read filename; do
-                        count=$((count+1))
+    total=$(echo "$files_found"|wc -l)
+    count=0
+    file_count=0
+
+    # while; do < <(input) loop because the file_count var needs to be accessible from outside the loop
+    while read filename; do
+        count=$((count+1))
+
+        print_progress "[ $count/$total ] $(dirname "$maildir_cur") - Looking for files for ${action}ion..."
+
+        srcfile="$maildir_cur/$filename"
+        tmpfile="$maildir_tmp/$filename"
+
+        if $dryrun ; then
+                # Not performing any actoins in dry run mode
+                print_info "DRY: Check if ${srcfile} needs ${action}ing"
+                print_info "DRY: ${action^}ing ${srcfile} into ${tmpfile} with file attributes"
+                continue
+        fi
+
+        # Check the file and act accordingly:
+        # - if it's compressed and compression was requested, skip it
+        # - if it's compressed and decompression was requested, decompress into the tmp dir
+        # - if it's not compressed and compression was requested, compress into the tmp dir
+        # - if it's not compressed and decompression was requested, skip it
+
+        # Using the mime type check here instead of the default for `file` since there are many
+        # text files, but they all share the same mime type - makes mismatch output a bit more uniform
+        mime_type=$(file -b --mime-type "$srcfile")
+        is_compressed=""
+        if [ \
+            "$mime_type" = "application/gzip" -o \
+            "$mime_type" = "application/x-gzip" -o \
+            "$mime_type" = "application/x-bzip2" -o \
+            "$mime_type" = "application/x-xz" \
+        ]; then
+            is_compressed=$(echo $mime_type | cut -d '/' -f 2 | cut -d '-' -f 2)
+        fi
+
+        # file_type=$(file -b "$srcfile" | awk '{print tolower($1)}')
+        # if [[ "$file_type" =~ (xz|bzip2|gzip) ]]; then
+        #     is_compressed=${BASH_REMATCH[1]}
+        # fi
+
+        if [ "$action" = "compress" -a "$is_compressed" = "" ]; then
+            $compress --best --stdout "$srcfile" > "$tmpfile"
+        elif [ "$action" = "decompress" -a "$is_compressed" != "" ]; then
+            $is_compressed --decompress --stdout "$srcfile" > "$tmpfile"
+        else
+            if $warn_mismatch; then
+                print_warning "Can't ${action} ${srcfile}, mime type is ${mime_type}. Skipping..."
+            fi
+            continue
+        fi
+
+        # Copy over the owner, modes and modification time from source
+        chown --reference="$srcfile" "$tmpfile"
+        chmod --reference="$srcfile" "$tmpfile"
+        touch --reference="$srcfile" "$tmpfile"
+        file_count=$((file_count+1))
+    done < <(echo "$files_found")
+
+    if $dryrun ; then
+        # Same as the previous loop - no need to do anything in dry run mode
+        # but we also don't want to lock the dir, plus there will be no files to work with
+        # in the tmp directory
+        sleep 1
+        print_done "$(dirname "$maildir_cur")"
+        continue
+    fi
+
+    if [ "$file_count" -gt 0 ]; then
+        print_info "Copied ${file_count} files in tmp"
+    else
+        print_info "No files were found for ${action}ing"
+        print_done "$(dirname "$maildir_cur")"
+        continue
+    fi
+
+    # Should really check dovecot-uidlist is in $maildir_cur/..
+    if lock=$(touch "$lockfile" && flock -w 10 -n "$maildir_cur" true || false); then
+        # The directory is locked now
+
+        count=0
+
+        echo "$files_found" | while read filename; do
+            count=$((count+1))
+
+            print_progress "[ $count/$total ] $(dirname "$maildir_cur") - Moving mails..."
+
+            # flags=$(echo $filename | awk -F:2, '{print $2}')
+
+            # http://wiki2.dovecot.org/MailboxFormat/Maildir
+            # The standard filename definition is: "<base filename>:2,<flags>".
+            # Dovecot has extended the <flags> field to be "<flags>[,<non-standard fields>]".
+            # This means that if Dovecot sees a comma in the <flags> field while updating flags in the filename,
+            # it doesn't touch anything after the comma. However other maildir MUAs may mess them up,
+            # so it's still not such a good idea to do that. Basic <flags> are described here. The <non-standard fields> isn't used by Dovecot for anything currently.
+
+            # There is no point dealing with additional flags dovecot or any other program doesn't care about
+            # As such, we will just copy the decompressed file back, without ajusting the name at all
+            
+            srcfile="${maildir_cur}/${filename}"
+            tmpfile="${maildir_tmp}/${filename}"
 
 
+            if [ -f "$srcfile" ] && [ -f "$tmpfile" ]; then
+                mv "$tmpfile" "$srcfile"
+            fi
 
-                        echo -ne "\r\e[K[ $count/$total ] \"$(dirname "$maildir")\" - ${action^}ing..."
-
-                        srcfile="$maildir/$filename"
-                        tmpfile="$tmpdir/$filename"
-
-                        if $debug ; then
-                                # Not performing any actoins in debug mode
-                                sleep 2
-                                continue
-                        fi
-
-                        if [[ "$action" == "compress" ]]; then
-                                $compress --best --stdout "$srcfile" > "$tmpfile"
-                        else
-                                # Autodetect compressed file type and use it as the decompression binary filename
-                                [[ "$(file -b "$srcfile" | awk '{print tolower($1)}')" =~ (xz|bzip2|gzip) ]] \
-                                        && decompress=${BASH_REMATCH[1]} \
-                                        || decompress=$compress
-                                $decompress --decompress --stdout "$srcfile" > "$tmpfile"
-                        fi
-
-                        # Copy over some things
-                        chown --reference="$srcfile" "$tmpfile" &&
-                        chmod --reference="$srcfile" "$tmpfile" &&
-                        touch --reference="$srcfile" "$tmpfile"
-                done
-
-                if $debug ; then
-                        # Same as the previous loop - no need to do anything in debug mode
-                        # but we also don't want to lock the dir
-                        sleep 1
-                        # Because we are skipping the rest of the loop...
-                        echo -e "\r\e[K[ Done ] \"$(dirname "$maildir")\""
-                        continue
-                fi
-
-                # Should really check dovecot-uidlist is in $maildir/..
-                if lock=$(touch "$lockfile" && flock -w 10 -n "$maildir" true || false); then
-                        # The directory is locked now
-
-                        count=0
-
-                        echo "$find" | while read filename; do
-                                count=$((count+1))
-                                echo -ne "\r\e[K[ $count/$total ] \"$(dirname "$maildir")\" - Moving mails..."
-
-                                flags=$(echo $filename | awk -F:2, '{print $2}')
-
-                                # http://wiki2.dovecot.org/MailboxFormat/Maildir
-                                # The standard filename definition is: "<base filename>:2,<flags>".
-                                # Dovecot has extended the <flags> field to be "<flags>[,<non-standard fields>]".
-                                # This means that if Dovecot sees a comma in the <flags> field while updating flags in the filename,
-                                # it doesn't touch anything after the comma. However other maildir MUAs may mess them up,
-                                # so it's still not such a good idea to do that. Basic <flags> are described here. The <non-standard fields> isn't used by Dovecot for anything currently.
-
-                                # Because of the above, we are adding "," before "Z" to designate it as custom flag
-                                if [[ "$action" == "compress" ]]; then
-                                        # Add "Z" to existing flags or along with "," if there are no other custom flags
-                                        if echo $flags | grep ',' &>/dev/null ; then
-                                                newname=$filename"Z"
-                                        else
-                                                newname=$filename",Z"
-                                        fi
-                                else
-                                        # Remove "Z" from the flags
-                                        if echo $flags | grep ',' &>/dev/null; then
-                                                # We know that a compressed mail will have a "Z" in the filename already, sed
-                                                # is *very* gready and will match till the last possible character. Also, it will be good
-                                                # to remove the comma if its the last in the filename (because of the custom flags)
-                                                newname=$(echo "$filename"|sed -e 's/\(.*\)Z/\1/; s/,$//')
-                                        else
-                                                # We should never ever land here, but give it a filename again, just in case...
-                                                newname=$(echo "$filename"|sed -e 's/\(.*\)Z/\1/')
-                                        fi
-                                fi
-
-                                srcfile=$maildir/$filename
-                                tmpfile=$tmpdir/$filename
-                                dstfile=$maildir/$newname
-
-                                if [ -f "$srcfile" ] && [ -f "$tmpfile" ]; then
-                                        #echo "$srcfile -> $dstfile"
-
-                                        mv "$tmpfile" "$srcfile" &&
-                                        mv "$srcfile" "$dstfile"
-                                else
-                                        rm -f "$tmpfile"
-                                fi
-                        done
-
-                else
-                        echo "Failed to lock: $maildir" >&2
-
-                        echo "$find" | while read filename; do
-                                rm -f "$tmpdir/$filename"
-                        done
-                fi
-                flock -u "$maildir" rm -f "$lockfile"
-                echo -e "\r\e[K[ Done ] \"$(dirname "$maildir")\""
+            if [ -f "$tmpfile" ]; then
+                rm -f "$tmpfile"
+            fi
         done
-#done
+
+    else
+        echo "Failed to lock: $maildir_cur" >&2
+
+        echo "$files_found" | while read filename; do
+                rm -f "$maildir_tmp/$filename"
+        done
+    fi
+
+    flock -u "$maildir_cur" rm -f "$lockfile"
+    print_done "$(dirname "$maildir_cur")"
+done
